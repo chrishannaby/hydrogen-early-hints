@@ -33,9 +33,27 @@ export default async function handleRequest(
 
   responseHeaders.set('Content-Type', 'text/html');
   responseHeaders.set('Content-Security-Policy', header);
-
+  responseHeaders.set(
+    'Link',
+    httpPushLinks(remixContext)
+      .map(
+        (link: string) =>
+          `<${link}>; rel=preload; as=script; crossorigin=anonymous`,
+      )
+      .concat(responseHeaders.get('Link') as string)
+      .filter(Boolean)
+      .join(','),
+  );
   return new Response(body, {
     headers: responseHeaders,
     status: responseStatusCode,
   });
+}
+
+function httpPushLinks(remixContext: EntryContext) {
+  return [
+    remixContext.manifest.url,
+    remixContext.manifest.entry.module,
+    ...remixContext.manifest.entry.imports,
+  ];
 }
