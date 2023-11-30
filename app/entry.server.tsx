@@ -1,8 +1,9 @@
 import type {EntryContext} from '@shopify/remix-oxygen';
-import {RemixServer} from '@remix-run/react';
+import {RemixServer, matchRoutes} from '@remix-run/react';
 import isbot from 'isbot';
 import {renderToReadableStream} from 'react-dom/server';
 import {createContentSecurityPolicy} from '@shopify/hydrogen';
+import {EntryRoute} from '@remix-run/react/dist/routes';
 
 export default async function handleRequest(
   request: Request,
@@ -35,14 +36,9 @@ export default async function handleRequest(
   responseHeaders.set('Content-Security-Policy', header);
   responseHeaders.set(
     'Link',
-    httpPushLinks(remixContext)
-      .map(
-        (link: string) =>
-          `<${link}>; rel=preload; as=script; crossorigin=anonymous`,
-      )
+    earlyHints(remixContext, request)
       .concat(responseHeaders.get('Link') as string)
-      .filter(Boolean)
-      .join(','),
+      .join(', '),
   );
   return new Response(body, {
     headers: responseHeaders,
@@ -50,10 +46,37 @@ export default async function handleRequest(
   });
 }
 
-function httpPushLinks(remixContext: EntryContext) {
-  return [
-    remixContext.manifest.url,
-    remixContext.manifest.entry.module,
-    ...remixContext.manifest.entry.imports,
-  ];
+function earlyHints(remixContext: EntryContext, request: Request) {
+  const matches = matchRoutes(
+    Object.values(remixContext.manifest.routes),
+    new URL(request.url).pathname,
+  );
+  const links = (matches || []).flatMap((match) => {
+    const parentLinks =
+      remixContext.routeModules[match.route?.parentId || ''].links;
+    const routeLinks = remixContext.routeModules[match.route.id].links;
+    return [
+      ...(parentLinks ? parentLinks() : []),
+      ...(routeLinks ? routeLinks() : []),
+    ];
+  });
+
+  const earlyHints = links
+    .map((link) => {
+      if ('href' in link) {
+        switch (link.rel) {
+          case 'stylesheet':
+            return `<${link.href}>; rel=preload; as=style`;
+          case 'script':
+            return `<${link.href}>; rel=preload; as=script`;
+          case 'preconnect':
+            return `<${link.href}>; rel=preconnect`;
+          default:
+            return;
+        }
+      }
+    })
+    .filter(Boolean);
+
+  return earlyHints;
 }
